@@ -144,6 +144,8 @@ def is_header_footer_line(text: str, y_pos: float, page_height: float) -> bool:
         return True
     if "zigbee cluster library specification" in lowered:
         return True
+    if re.fullmatch(r"[A-Z][A-Z0-9/&\-]{1,20}", text.strip()):
+        return True
     if re.fullmatch(r"chapter\s+\d+\s+[a-z][a-z0-9/&(),\-\s]*", lowered):
         return True
     if re.fullmatch(r"page\s+\d+(?:-\d+)?", lowered):
@@ -563,7 +565,8 @@ def build_text_elements(
     toc_mode: bool = False,
     toc_start_page: int | None = None,
     toc_pending_prefix: str | None = None,
-) -> Tuple[List[Dict], List[Dict], bool, int | None, str | None]:
+    toc_consumed: bool = False,
+) -> Tuple[List[Dict], List[Dict], bool, int | None, str | None, bool]:
     elements: List[Dict] = []
     headings: List[Dict] = []
 
@@ -606,7 +609,11 @@ def build_text_elements(
             heading_html = f"<{tag}{anchor_attr}>{heading_text}</{tag}>"
             heading_plain = " ".join(line["plain"].split())
             heading_upper = heading_plain.upper()
-            if "TABLE OF CONTENTS" in heading_plain.upper():
+            if (
+                "TABLE OF CONTENTS" in heading_plain.upper()
+                and not toc_consumed
+                and line["page_number"] <= 40
+            ):
                 toc_mode = True
                 toc_start_page = line["page_number"]
             elif toc_mode and (
@@ -620,10 +627,12 @@ def build_text_elements(
                 toc_mode = False
                 toc_start_page = None
                 toc_pending_prefix = None
+                toc_consumed = True
             elif toc_mode and anchor:
                 toc_mode = False
                 toc_start_page = None
                 toc_pending_prefix = None
+                toc_consumed = True
             heading_data = {
                 "type": "heading",
                 "y": line["y"],
@@ -690,7 +699,7 @@ def build_text_elements(
     merged_elements, merged_headings = merge_split_headings(elements, headings)
     merged_elements = merge_bullet_paragraphs(merged_elements)
     merged_elements = merge_ordered_paragraphs(merged_elements)
-    return merged_elements, merged_headings, toc_mode, toc_start_page, toc_pending_prefix
+    return merged_elements, merged_headings, toc_mode, toc_start_page, toc_pending_prefix, toc_consumed
 
 
 def extract_images(
@@ -796,18 +805,20 @@ def convert_pdf_to_html(pdf_path: Path, output_path: Path, extract_page_images: 
     toc_mode = False
     toc_start_page: int | None = None
     toc_pending_prefix: str | None = None
+    toc_consumed = False
 
     try:
         for page_index in range(len(document)):
             page = document[page_index]
             table_elements, table_regions = extract_tables(page)
             text_lines = extract_text_lines(page, table_regions, page_index + 1)
-            text_elements, _, toc_mode, toc_start_page, toc_pending_prefix = build_text_elements(
+            text_elements, _, toc_mode, toc_start_page, toc_pending_prefix, toc_consumed = build_text_elements(
                 text_lines,
                 used_section_ids,
                 toc_mode=toc_mode,
                 toc_start_page=toc_start_page,
                 toc_pending_prefix=toc_pending_prefix,
+                toc_consumed=toc_consumed,
             )
             image_elements = (
                 extract_images(document, page, page_index + 1, images_dir) if extract_page_images else []
