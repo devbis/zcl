@@ -61,6 +61,7 @@ ALLOWED_ATTRS = {
 }
 
 SECTION_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\b")
+SECTION_ONLY_FULL_RE = re.compile(r"^\s*\d+(?:\.\d+){2,}\s*$")
 SECTION_ONLY_RE = re.compile(r"^\s*\d+(?:\.\d+)+\s*$")
 TOC_SECTION_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+(.+)$")
 TOC_CHAPTER_RE = re.compile(r"^\s*Chapter\s+(\d+)\b", re.IGNORECASE)
@@ -92,6 +93,15 @@ def heading_tag(font_size: float, has_bold: bool) -> str | None:
     if font_size >= 11 and has_bold:
         return "h5"
     return None
+
+
+def section_depth_heading_tag(text: str) -> str | None:
+    compact = " ".join(text.split())
+    if not SECTION_ONLY_FULL_RE.match(compact):
+        return None
+    depth = compact.count(".") + 1
+    level = max(3, min(6, depth))
+    return f"h{level}"
 
 
 def section_id(text: str) -> str | None:
@@ -285,6 +295,9 @@ def extract_text_lines(
             x_pos = float(bbox[0])
             if is_header_footer_line(plain_text, float(bbox[1]), page_height):
                 continue
+            if re.fullmatch(r"\d+", plain_text):
+                if int(plain_text) >= 10000:
+                    continue
             if re.fullmatch(r"\d{1,4}", plain_text) and x_pos < 100:
                 continue
 
@@ -426,7 +439,7 @@ def merge_line(
 
 def append_paragraph(elements: List[Dict], y_value: float, paragraph_html: str, paragraph_plain: str) -> None:
     compact = " ".join(paragraph_plain.split())
-    if re.fullmatch(r"\d{1,4}", compact):
+    if re.fullmatch(r"\d+", compact):
         return
     if re.fullmatch(r"Chapter\s+\d+", compact):
         return
@@ -560,15 +573,23 @@ def build_text_elements(
     prev_y = 0.0
     prev_x = 0.0
     has_paragraph = False
+    pending_heading_level: int | None = None
     for line in lines:
-        if toc_mode and toc_start_page is not None and line["page_number"] - toc_start_page > 20:
-            toc_mode = False
-            toc_start_page = None
-
         if not toc_mode and is_running_chapter_header(line["plain"]):
             continue
 
-        tag = heading_tag(line["font_size"], line["has_bold"])
+        forced_tag = None if toc_mode else section_depth_heading_tag(line["plain"])
+        continuation_tag = None
+        if (
+            not toc_mode
+            and pending_heading_level is not None
+            and line["has_bold"]
+            and not section_depth_heading_tag(line["plain"])
+            and 1 < len(line["plain"].strip()) < 120
+        ):
+            continuation_tag = f"h{pending_heading_level}"
+
+        tag = forced_tag or continuation_tag or heading_tag(line["font_size"], line["has_bold"])
         if toc_mode and is_toc_like_line(line["plain"]):
             tag = None
         if tag:
@@ -584,9 +605,25 @@ def build_text_elements(
             level = int(tag[1])
             heading_html = f"<{tag}{anchor_attr}>{heading_text}</{tag}>"
             heading_plain = " ".join(line["plain"].split())
+            heading_upper = heading_plain.upper()
             if "TABLE OF CONTENTS" in heading_plain.upper():
                 toc_mode = True
                 toc_start_page = line["page_number"]
+            elif toc_mode and (
+                "LIST OF FIGURES" in heading_upper or "LIST OF TABLES" in heading_upper
+            ):
+                pass
+            elif toc_mode and (
+                heading_upper.startswith("CHAPTER ")
+                or bool(re.fullmatch(r"[A-Z0-9/&(),\-\s]{4,}", heading_upper))
+            ):
+                toc_mode = False
+                toc_start_page = None
+                toc_pending_prefix = None
+            elif toc_mode and anchor:
+                toc_mode = False
+                toc_start_page = None
+                toc_pending_prefix = None
             heading_data = {
                 "type": "heading",
                 "y": line["y"],
@@ -598,6 +635,7 @@ def build_text_elements(
             elements.append(heading_data)
             if anchor:
                 headings.append(heading_data)
+            pending_heading_level = level if forced_tag else None
             prev_y = line["y"]
             continue
 
@@ -644,6 +682,7 @@ def build_text_elements(
 
         prev_y = line["y"]
         prev_x = line["x"]
+        pending_heading_level = None
 
     if has_paragraph:
         append_paragraph(elements, paragraph_y, paragraph_html, paragraph_plain)
