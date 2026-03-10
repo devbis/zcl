@@ -33,13 +33,16 @@ Workflow: `.github/workflows/publish-pages.yml`
 What it does:
 1. Downloads the source PDF from Zigbee Alliance.
 2. Converts it with `extract_pdf_to_html.py`.
-3. Publishes `site/index.html` to GitHub Pages.
+3. Commits generated files to the `gh-pages` branch (clean overwrite each run).
+4. GitHub Pages serves the site from `gh-pages`.
 
 Trigger options:
 - Manual: **Actions → Publish ZCL HTML to Pages → Run workflow**
 - Scheduled: every Monday at 03:00 UTC
 
-Before first run, set **Settings → Pages → Source = GitHub Actions**.
+Before first run, set **Settings → Pages → Deploy from a branch**, then choose:
+- Branch: `gh-pages`
+- Folder: `/ (root)`
 
 ## Split HTML by sections
 
