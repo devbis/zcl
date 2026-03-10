@@ -40,8 +40,8 @@ Workflow: `.github/workflows/publish-pages.yml`
 
 What it does:
 1. Downloads the source PDF from Zigbee Alliance.
-2. Converts it with `extract_pdf_to_html.py`.
-3. Commits generated files to the `gh-pages` branch (clean overwrite each run).
+2. Converts it with `extract_pdf_to_html.py`, splits by chapters (`split_html.py`), and builds a navigable docs site (`build_docs_site.py`).
+3. Commits generated docs site files to the `gh-pages` branch (clean overwrite each run).
 4. GitHub Pages serves the site from `gh-pages`.
 
 Trigger options:
@@ -64,3 +64,17 @@ Arguments:
 
 Links like `#section-X`, `#figure-X-Y`, and `#table-X-Y` are rewritten to
 `section-<N>.html#...` when the target anchor is in another file.
+
+## Build navigable docs site from split sections
+
+```bash
+python build_docs_site.py split-full docs-site --title "ZCL Documentation"
+```
+
+What this script generates:
+- Left sidebar with chapter/page navigation
+- Top controls: Home + Previous/Next page
+- Right panel: **On this page** heading links
+- Preserved section/figure/table anchors and cross-page links
+
+Input folder must contain `index.html` and `section-*.html` files (for example output from `split_html.py`).

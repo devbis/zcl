@@ -36,12 +36,14 @@ jobs:
         run: |
           curl -fL "https://zigbeealliance.org/wp-content/uploads/2021/10/07-5123-08-Zigbee-Cluster-Library.pdf" -o zcl.pdf
 
-      - name: Convert PDF to HTML
+      - name: Build navigable docs site
         run: |
+          rm -rf site split-full out-full.html out-full.images
           mkdir -p site
-          python extract_pdf_to_html.py zcl.pdf -o site/index.html --images
-          mv site/index.images site/images
-          sed -i 's/src="index.images/src="images/g' site/index.html
+          python extract_pdf_to_html.py zcl.pdf -o out-full.html --images
+          python split_html.py out-full.html split-full
+          if [ -d out-full.images ]; then cp -R out-full.images split-full/; fi
+          python build_docs_site.py split-full site --title "ZCL Documentation"
 
       - name: Publish to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
