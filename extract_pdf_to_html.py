@@ -60,7 +60,7 @@ ALLOWED_ATTRS = {
     "*": {"class"},
 }
 
-SECTION_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\b")
+SECTION_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)(?!-)\b")
 SECTION_ONLY_FULL_RE = re.compile(r"^\s*\d+(?:\.\d+){2,}\s*$")
 SECTION_ONLY_RE = re.compile(r"^\s*\d+(?:\.\d+)+\s*$")
 TOC_SECTION_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+(.+)$")
