@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup, Tag
 
 SECTION_FILE_RE = re.compile(r"^section-(\d+)\.html$", re.IGNORECASE)
 HEADING_TAG_RE = re.compile(r"^h([1-6])$", re.IGNORECASE)
+PILCROW_TAIL_RE = re.compile(r"(?:\s*¶\s*)+$")
 
 
 @dataclass
@@ -37,6 +38,11 @@ def normalize_text(value: str) -> str:
     return " ".join(value.split())
 
 
+def normalize_nav_text(value: str) -> str:
+    cleaned = normalize_text(value)
+    return PILCROW_TAIL_RE.sub("", cleaned).strip()
+
+
 def chapter_from_filename(filename: str) -> int | None:
     match = SECTION_FILE_RE.match(filename)
     if not match:
@@ -57,12 +63,12 @@ def derive_title(container: Tag, filename: str) -> str:
     headings = container.find_all(HEADING_TAG_RE)
     if filename == "index.html":
         for heading in headings:
-            text = normalize_text(heading.get_text(" ", strip=True))
+            text = normalize_nav_text(heading.get_text(" ", strip=True))
             if "TABLE OF CONTENTS" in text.upper():
                 return text
         return "Table of Contents"
     for heading in headings:
-        text = normalize_text(heading.get_text(" ", strip=True))
+        text = normalize_nav_text(heading.get_text(" ", strip=True))
         if text:
             return text
     return Path(filename).stem
@@ -77,7 +83,7 @@ def collect_on_page_items(container: Tag) -> list[OnPageItem]:
             continue
         if anchor_id in seen_ids:
             continue
-        text = normalize_text(heading.get_text(" ", strip=True))
+        text = normalize_nav_text(heading.get_text(" ", strip=True))
         if not text:
             continue
         level_match = HEADING_TAG_RE.match(heading.name or "")

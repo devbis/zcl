@@ -1010,6 +1010,7 @@ def add_headerlink_permalinks(input_html: str) -> str:
         permalink = soup.new_tag("a", attrs={"class": "headerlink", "href": f"#{tag_id}"})
         permalink["title"] = "Link to this heading/paragraph"
         permalink.string = "¶"
+        tag.append(" ")
         tag.append(permalink)
     return str(soup)
 
