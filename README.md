@@ -26,6 +26,14 @@ python extract_pdf_to_html.py zcl-1-300.pdf -o out-1-300.html --images
 
 This creates `out-1-300.images/` and inserts `<img ...>` tags at approximate positions from the PDF page layout.
 
+## Anchors and copyable links
+
+- Section headings get stable `id` anchors (e.g., `#section-2-6-2-7`).
+- Lines starting with `Figure ...` and `Table ...` get stable anchors (e.g., `#figure-12-58`, `#table-6-14`).
+- TOC entries for sections/chapters/figures/tables are converted to links to these anchors.
+- Every element with an `id` displays a permalink marker:
+  `<a class="headerlink" href="#..." title="Link to this heading/paragraph">¶</a>`
+
 ## GitHub Pages automation
 
 Workflow: `.github/workflows/publish-pages.yml`
@@ -54,4 +62,5 @@ Arguments:
 - `input_html`: source converted HTML file
 - `output_dir`: directory for generated files (`index.html`, `section-<N>.html`) split by chapters
 
-Links like `#section-X` are rewritten to `section-<N>.html#section-X` when target section is in another file.
+Links like `#section-X`, `#figure-X-Y`, and `#table-X-Y` are rewritten to
+`section-<N>.html#...` when the target anchor is in another file.

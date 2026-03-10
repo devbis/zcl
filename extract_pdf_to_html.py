@@ -48,13 +48,14 @@ ALLOWED_TAGS = {
 ALLOWED_ATTRS = {
     "link": {"href", "rel"},
     "meta": {"charset", "name", "content"},
-    "a": {"href", "name", "id", "class"},
+    "a": {"href", "name", "id", "class", "title"},
     "h1": {"id"},
     "h2": {"id"},
     "h3": {"id"},
     "h4": {"id"},
     "h5": {"id"},
     "h6": {"id"},
+    "p": {"id"},
     "img": {"src", "alt", "class"},
     "nav": {"class"},
     "*": {"class"},
@@ -70,6 +71,7 @@ TOC_SECTION_ONLY_RE = re.compile(r"^\s*\d+(?:\.\d+)+\s*$")
 CHAPTER_ONLY_RE = re.compile(r"^\s*CHAPTER\s+(\d+)\s*$")
 ALL_CAPS_TITLE_RE = re.compile(r"^[A-Z0-9/&(),\-\s]{3,}$")
 CHAPTER_ANCHOR_RE = re.compile(r"^section-(\d+)$")
+FIGURE_TABLE_RE = re.compile(r"^\s*(Figure|Table)\s+(\d+(?:[.-]\d+)*)\b", re.IGNORECASE)
 
 
 def is_bold(span: Dict) -> bool:
@@ -340,10 +342,25 @@ def strip_toc_line_number(text: str) -> str:
     return " ".join(tokens)
 
 
+def figure_table_anchor_id(text: str) -> str | None:
+    match = FIGURE_TABLE_RE.match(" ".join(text.split()))
+    if not match:
+        return None
+    kind = match.group(1).lower()
+    number = re.sub(r"[^0-9]+", "-", match.group(2)).strip("-")
+    if not number:
+        return None
+    return f"{kind}-{number}"
+
+
 def toc_line_to_html(text: str) -> str:
     plain = strip_toc_line_number(text)
     if not plain:
         return ""
+
+    figure_table_id = figure_table_anchor_id(plain)
+    if figure_table_id:
+        return f'<a href="#{figure_table_id}">{html.escape(plain)}</a>'
 
     if re.fullmatch(r"\d+(?:\.\d+)*", plain):
         return f'<a href="#section-{plain.replace(".", "-")}">{html.escape(plain)}</a>'
@@ -739,6 +756,29 @@ def build_text_elements(
 
         line_plain = line["plain"]
         line_html = line["html"]
+        figure_table_id = None if toc_mode else figure_table_anchor_id(line_plain)
+        if figure_table_id:
+            if has_paragraph:
+                append_paragraph(elements, paragraph_y, paragraph_html, paragraph_plain)
+                paragraph_html = ""
+                paragraph_plain = ""
+                has_paragraph = False
+            anchor = unique_anchor_id(figure_table_id, used_section_ids)
+            anchor_attr = f' id="{anchor}"' if anchor else ""
+            elements.append(
+                {
+                    "type": "caption",
+                    "y": line["y"],
+                    "html": f"<p{anchor_attr}>{line_html}</p>",
+                    "id": anchor,
+                    "text": line_plain,
+                }
+            )
+            prev_y = line["y"]
+            prev_x = line["x"]
+            pending_heading_level = None
+            continue
+
         if toc_mode:
             line_plain = strip_toc_line_number(line_plain)
             if not line_plain:
@@ -957,6 +997,42 @@ def remove_false_chapter_fragments(input_html: str) -> str:
     return str(soup)
 
 
+def add_headerlink_permalinks(input_html: str) -> str:
+    soup = BeautifulSoup(input_html, "html.parser")
+    for tag in soup.find_all(True):
+        if tag.name == "a":
+            continue
+        tag_id = tag.get("id")
+        if not isinstance(tag_id, str) or not tag_id:
+            continue
+        if tag.find("a", class_="headerlink", href=f"#{tag_id}") is not None:
+            continue
+        permalink = soup.new_tag("a", attrs={"class": "headerlink", "href": f"#{tag_id}"})
+        permalink["title"] = "Link to this heading/paragraph"
+        permalink.string = "¶"
+        tag.append(permalink)
+    return str(soup)
+
+
+def remove_unresolved_figure_table_links(input_html: str) -> str:
+    soup = BeautifulSoup(input_html, "html.parser")
+    existing_ids = {
+        tag_id
+        for tag in soup.find_all(True)
+        for tag_id in [tag.get("id")]
+        if isinstance(tag_id, str) and tag_id
+    }
+    for link in soup.select('a[href^="#figure-"], a[href^="#table-"]'):
+        href = link.get("href")
+        if not isinstance(href, str):
+            continue
+        target_id = href[1:]
+        if target_id in existing_ids:
+            continue
+        link.replace_with(link.get_text())
+    return str(soup)
+
+
 def convert_pdf_to_html(pdf_path: Path, output_path: Path, extract_page_images: bool) -> None:
     if not pdf_path.exists():
         raise FileNotFoundError(f"Input PDF does not exist: {pdf_path}")
@@ -1021,6 +1097,8 @@ def convert_pdf_to_html(pdf_path: Path, output_path: Path, extract_page_images: 
     sanitized = sanitize_html(html_doc)
     sanitized = normalize_output_chapter_headings(sanitized)
     sanitized = remove_false_chapter_fragments(sanitized)
+    sanitized = remove_unresolved_figure_table_links(sanitized)
+    sanitized = add_headerlink_permalinks(sanitized)
     output_path.write_text(sanitized, encoding="utf-8")
 
 

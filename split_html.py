@@ -10,15 +10,18 @@ from pathlib import Path
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 SECTION_ID_RE = re.compile(r"^section-(\d+)(?:-.*)?$")
+FIGURE_TABLE_ID_RE = re.compile(r"^(?:figure|table)-(\d+)(?:-.*)?$", re.IGNORECASE)
 CHAPTER_HEADING_RE = re.compile(r"^\s*CHAPTER\s+(\d+)\b", re.IGNORECASE)
 
 
-def root_from_section_id(section_id: str | None) -> str | None:
-    if not section_id:
+def root_from_anchor_id(anchor_id: str | None) -> str | None:
+    if not anchor_id:
         return None
-    match = SECTION_ID_RE.match(section_id)
+    match = SECTION_ID_RE.match(anchor_id)
     if not match:
-        return None
+        match = FIGURE_TABLE_ID_RE.match(anchor_id)
+        if not match:
+            return None
     return match.group(1)
 
 
@@ -63,7 +66,7 @@ def collect_chunks(source_soup: BeautifulSoup) -> tuple[dict[str, list[str]], di
         if not isinstance(node, Tag):
             continue
 
-        node_root = root_from_section_id(node.get("id"))
+        node_root = root_from_anchor_id(node.get("id"))
         chapter_root = root_from_chapter_heading(node)
         if chapter_root is not None:
             current_root = chapter_root
@@ -74,13 +77,13 @@ def collect_chunks(source_soup: BeautifulSoup) -> tuple[dict[str, list[str]], di
             section_id = tagged.get("id")
             if not isinstance(section_id, str):
                 continue
-            tagged_root = root_from_section_id(section_id)
+            tagged_root = root_from_anchor_id(section_id)
             if tagged_root is not None:
                 id_to_root[section_id] = tagged_root
 
         if node.get("id"):
             section_id = str(node.get("id"))
-            node_id_root = root_from_section_id(section_id)
+            node_id_root = root_from_anchor_id(section_id)
             if node_id_root is not None:
                 id_to_root[section_id] = node_id_root
 
@@ -91,12 +94,12 @@ def collect_chunks(source_soup: BeautifulSoup) -> tuple[dict[str, list[str]], di
 
 
 def rewrite_links(container: Tag, current_root: str | None, id_to_root: dict[str, str]) -> None:
-    for link in container.select('a[href^="#section-"]'):
+    for link in container.select('a[href^="#"]'):
         href = link.get("href")
         if not isinstance(href, str):
             continue
         target_id = href[1:]
-        target_root = id_to_root.get(target_id) or root_from_section_id(target_id)
+        target_root = id_to_root.get(target_id) or root_from_anchor_id(target_id)
         if target_root is None:
             continue
         if current_root == target_root:
