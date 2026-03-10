@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 import fitz
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 ALLOWED_TAGS = {
     "table",
@@ -67,6 +67,9 @@ TOC_SECTION_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+(.+)$")
 TOC_CHAPTER_RE = re.compile(r"^\s*Chapter\s+(\d+)\b", re.IGNORECASE)
 TOC_CHAPTER_ONLY_RE = re.compile(r"^\s*Chapter\s+\d+\s*$", re.IGNORECASE)
 TOC_SECTION_ONLY_RE = re.compile(r"^\s*\d+(?:\.\d+)+\s*$")
+CHAPTER_ONLY_RE = re.compile(r"^\s*CHAPTER\s+(\d+)\s*$")
+ALL_CAPS_TITLE_RE = re.compile(r"^[A-Z0-9/&(),\-\s]{3,}$")
+CHAPTER_ANCHOR_RE = re.compile(r"^section-(\d+)$")
 
 
 def is_bold(span: Dict) -> bool:
@@ -384,6 +387,28 @@ def merge_split_headings(elements: List[Dict], headings: List[Dict]) -> Tuple[Li
         current_text = str(current.get("text", "")).strip()
         current_level = int(current.get("level", 2))
         nxt = elements[i + 1] if i + 1 < len(elements) else None
+        chapter_match = CHAPTER_ONLY_RE.match(current_text)
+        can_merge_chapter_heading = bool(
+            nxt
+            and current.get("type") == "heading"
+            and nxt.get("type") == "heading"
+            and current_level == int(nxt.get("level", 2))
+            and chapter_match
+            and not nxt.get("id")
+            and ALL_CAPS_TITLE_RE.match(str(nxt.get("text", "")).strip())
+        )
+        if can_merge_chapter_heading and chapter_match:
+            chapter_number = chapter_match.group(1)
+            next_text = str(nxt.get("text", "")).strip()
+            merged_text = f"CHAPTER {chapter_number} {next_text}".strip()
+            anchor = str(current.get("id") or f"section-{chapter_number}")
+            current["id"] = anchor
+            current["text"] = merged_text
+            current["html"] = f'<h{current_level} id="{anchor}">{html.escape(merged_text)}</h{current_level}>'
+            merged.append(current)
+            i += 2
+            continue
+
         can_merge_wrapped_heading = bool(
             nxt
             and current.get("type") == "heading"
@@ -421,6 +446,59 @@ def merge_split_headings(elements: List[Dict], headings: List[Dict]) -> Tuple[Li
 
     merged_headings = [item for item in merged if item.get("type") == "heading" and item.get("id")]
     return merged, merged_headings
+
+
+def element_plain_text(element: Dict) -> str:
+    fragment = str(element.get("html", ""))
+    soup = BeautifulSoup(fragment, "html.parser")
+    return " ".join(soup.get_text(" ", strip=True).split())
+
+
+def normalize_chapter_heading_blocks(elements: List[Dict]) -> List[Dict]:
+    normalized: List[Dict] = []
+    i = 0
+    while i < len(elements):
+        current = elements[i]
+        current_id = current.get("id")
+        if current.get("type") == "heading" and isinstance(current_id, str):
+            chapter_match = CHAPTER_ANCHOR_RE.match(current_id)
+            if chapter_match:
+                chapter_number = chapter_match.group(1)
+                current_text = " ".join(str(current.get("text", "")).split())
+                if re.fullmatch(rf"Chapter\s+{chapter_number}", current_text, flags=re.IGNORECASE):
+                    merged_text = f"CHAPTER {chapter_number}"
+                    consume_indices: set[int] = set()
+
+                    next_index = i + 1
+                    if next_index < len(elements) and elements[next_index].get("type") == "paragraph":
+                        paragraph_text = element_plain_text(elements[next_index])
+                        if paragraph_text and len(paragraph_text) <= 80 and re.fullmatch(
+                            r"[A-Za-z][A-Za-z0-9/&(),\-\s]+",
+                            paragraph_text,
+                        ):
+                            merged_text = f"{merged_text} {paragraph_text}".strip()
+                            consume_indices.add(next_index)
+                            next_index += 1
+
+                    if next_index < len(elements) and elements[next_index].get("type") == "heading":
+                        next_text = " ".join(str(elements[next_index].get("text", "")).split())
+                        if re.match(rf"CHAPTER\s+{chapter_number}\b", next_text, flags=re.IGNORECASE):
+                            merged_text = next_text
+                            consume_indices.add(next_index)
+
+                    level = int(current.get("level", 2))
+                    current["text"] = merged_text
+                    current["html"] = f'<h{level} id="section-{chapter_number}">{html.escape(merged_text)}</h{level}>'
+                    normalized.append(current)
+                    i += 1
+                    while i < len(elements) and i in consume_indices:
+                        i += 1
+                    continue
+
+        normalized.append(current)
+        i += 1
+
+    return normalized
 
 
 def merge_line(
@@ -581,7 +659,14 @@ def build_text_elements(
         if not toc_mode and is_running_chapter_header(line["plain"]):
             continue
 
-        forced_tag = None if toc_mode else section_depth_heading_tag(line["plain"])
+        if toc_mode and CHAPTER_ONLY_RE.match(line["plain"]) and float(line["font_size"]) >= 16:
+            toc_mode = False
+            toc_start_page = None
+            toc_pending_prefix = None
+            toc_consumed = True
+
+        chapter_forced_tag = "h2" if (not toc_mode and CHAPTER_ONLY_RE.match(line["plain"])) else None
+        forced_tag = None if toc_mode else (section_depth_heading_tag(line["plain"]) or chapter_forced_tag)
         continuation_tag = None
         if (
             not toc_mode
@@ -600,14 +685,18 @@ def build_text_elements(
                 append_paragraph(elements, paragraph_y, paragraph_html, paragraph_plain)
                 paragraph_html = ""
                 paragraph_plain = ""
-                has_paragraph = False
+            has_paragraph = False
 
             heading_text = remove_strong(line["html"])
-            anchor = unique_anchor_id(section_id(line["plain"]), used_section_ids)
+            heading_plain = " ".join(line["plain"].split())
+            chapter_match = CHAPTER_ONLY_RE.match(heading_plain)
+            base_anchor = section_id(line["plain"])
+            if not base_anchor and chapter_match and not toc_mode:
+                base_anchor = f"section-{chapter_match.group(1)}"
+            anchor = unique_anchor_id(base_anchor, used_section_ids)
             anchor_attr = f' id="{anchor}"' if anchor else ""
             level = int(tag[1])
             heading_html = f"<{tag}{anchor_attr}>{heading_text}</{tag}>"
-            heading_plain = " ".join(line["plain"].split())
             heading_upper = heading_plain.upper()
             if (
                 "TABLE OF CONTENTS" in heading_plain.upper()
@@ -697,6 +786,8 @@ def build_text_elements(
         append_paragraph(elements, paragraph_y, paragraph_html, paragraph_plain)
 
     merged_elements, merged_headings = merge_split_headings(elements, headings)
+    merged_elements = normalize_chapter_heading_blocks(merged_elements)
+    merged_headings = [item for item in merged_elements if item.get("type") == "heading" and item.get("id")]
     merged_elements = merge_bullet_paragraphs(merged_elements)
     merged_elements = merge_ordered_paragraphs(merged_elements)
     return merged_elements, merged_headings, toc_mode, toc_start_page, toc_pending_prefix, toc_consumed
@@ -791,11 +882,87 @@ def sanitize_html(input_html: str) -> str:
     return str(soup)
 
 
+def normalize_output_chapter_headings(input_html: str) -> str:
+    soup = BeautifulSoup(input_html, "html.parser")
+    heading_tags = {"h1", "h2", "h3", "h4", "h5", "h6"}
+    for heading in soup.find_all(heading_tags):
+        heading_id = heading.get("id")
+        if not isinstance(heading_id, str):
+            continue
+        chapter_match = CHAPTER_ANCHOR_RE.match(heading_id)
+        if not chapter_match:
+            continue
+        chapter_number = chapter_match.group(1)
+        heading_text = " ".join(heading.get_text(" ", strip=True).split())
+        if not re.fullmatch(rf"Chapter\s+{chapter_number}", heading_text, flags=re.IGNORECASE):
+            continue
+
+        merged_text: str | None = None
+        title_paragraph: Tag | None = None
+
+        sibling = heading.find_next_sibling()
+        if isinstance(sibling, Tag) and sibling.name == "p":
+            paragraph_text = " ".join(sibling.get_text(" ", strip=True).split())
+            if paragraph_text and len(paragraph_text) <= 80 and re.fullmatch(
+                r"[A-Za-z][A-Za-z0-9/&(),\-\s]+",
+                paragraph_text,
+            ):
+                merged_text = f"CHAPTER {chapter_number} {paragraph_text}".strip()
+                title_paragraph = sibling
+                sibling = sibling.find_next_sibling()
+
+        if isinstance(sibling, Tag) and sibling.name in heading_tags:
+            sibling_text = " ".join(sibling.get_text(" ", strip=True).split())
+            if re.match(rf"CHAPTER\s+{chapter_number}\b", sibling_text, flags=re.IGNORECASE):
+                merged_text = sibling_text
+                sibling.decompose()
+
+        if merged_text:
+            heading.clear()
+            heading.append(merged_text)
+            heading["id"] = f"section-{chapter_number}"
+            if title_paragraph is not None:
+                title_paragraph.decompose()
+
+    return str(soup)
+
+
+def remove_false_chapter_fragments(input_html: str) -> str:
+    soup = BeautifulSoup(input_html, "html.parser")
+    heading_tags = {"h1", "h2", "h3", "h4", "h5", "h6"}
+    section_sub_id_re = re.compile(r"^section-(\d+)-\d+")
+
+    for heading in soup.find_all(heading_tags):
+        heading_id = heading.get("id")
+        if not isinstance(heading_id, str):
+            continue
+
+        id_match = section_sub_id_re.match(heading_id)
+        if not id_match:
+            continue
+
+        chapter_number = id_match.group(1)
+        heading_text = " ".join(heading.get_text(" ", strip=True).split())
+        if not re.fullmatch(rf"Chapter\s+{chapter_number}", heading_text, flags=re.IGNORECASE):
+            continue
+
+        next_sibling = heading.find_next_sibling()
+        if isinstance(next_sibling, Tag) and next_sibling.name == "p":
+            paragraph_text = " ".join(next_sibling.get_text(" ", strip=True).split())
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9/&(),\-\s]{1,80}", paragraph_text):
+                next_sibling.decompose()
+
+        heading.decompose()
+
+    return str(soup)
+
+
 def convert_pdf_to_html(pdf_path: Path, output_path: Path, extract_page_images: bool) -> None:
     if not pdf_path.exists():
         raise FileNotFoundError(f"Input PDF does not exist: {pdf_path}")
 
-    images_dir = output_path.with_suffix(output_path.suffix + ".images")
+    images_base = output_path.with_suffix("") if output_path.suffix else output_path
+    images_dir = images_base.with_name(f"{images_base.name}.images")
     if extract_page_images:
         images_dir.mkdir(parents=True, exist_ok=True)
 
@@ -832,6 +999,7 @@ def convert_pdf_to_html(pdf_path: Path, output_path: Path, extract_page_images: 
         document.close()
 
     all_elements, _ = merge_split_headings(all_elements, [])
+    all_elements = normalize_chapter_heading_blocks(all_elements)
 
     body_parts = [element["html"] for element in all_elements]
 
@@ -851,6 +1019,8 @@ def convert_pdf_to_html(pdf_path: Path, output_path: Path, extract_page_images: 
 """
 
     sanitized = sanitize_html(html_doc)
+    sanitized = normalize_output_chapter_headings(sanitized)
+    sanitized = remove_false_chapter_fragments(sanitized)
     output_path.write_text(sanitized, encoding="utf-8")
 
 

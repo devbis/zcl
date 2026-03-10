@@ -24,6 +24,8 @@ With images:
 python extract_pdf_to_html.py zcl-1-300.pdf -o out-1-300.html --images
 ```
 
+This creates `out-1-300.images/` and inserts `<img ...>` tags at approximate positions from the PDF page layout.
+
 ## GitHub Pages automation
 
 Workflow: `.github/workflows/publish-pages.yml`
@@ -38,3 +40,15 @@ Trigger options:
 - Scheduled: every Monday at 03:00 UTC
 
 Before first run, set **Settings → Pages → Source = GitHub Actions**.
+
+## Split HTML by sections
+
+```bash
+python split_html.py out-full.html split-output/
+```
+
+Arguments:
+- `input_html`: source converted HTML file
+- `output_dir`: directory for generated files (`index.html`, `section-<N>.html`) split by chapters
+
+Links like `#section-X` are rewritten to `section-<N>.html#section-X` when target section is in another file.
