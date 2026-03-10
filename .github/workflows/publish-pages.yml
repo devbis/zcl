@@ -31,7 +31,7 @@ jobs:
 
       - name: Download ZCL PDF
         run: |
-          curl -fL "https://zigbeealliance.org/wp-content/uploads/2019/12/07-5123-06-zigbee-cluster-library-specification.pdf" -o zcl.pdf
+          curl -fL "https://zigbeealliance.org/wp-content/uploads/2021/10/07-5123-08-Zigbee-Cluster-Library.pdf" -o zcl.pdf
 
       - name: Convert PDF to HTML
         run: |
