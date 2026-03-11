@@ -15,6 +15,8 @@ from bs4 import BeautifulSoup, Tag
 SECTION_FILE_RE = re.compile(r"^section-(\d+)\.html$", re.IGNORECASE)
 HEADING_TAG_RE = re.compile(r"^h([1-6])$", re.IGNORECASE)
 PILCROW_TAIL_RE = re.compile(r"(?:\s*¶\s*)+$")
+SECTION_NUMBER_PREFIX_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\b")
+MAX_ON_PAGE_SECTION_DEPTH = 3
 
 
 @dataclass
@@ -41,6 +43,13 @@ def normalize_text(value: str) -> str:
 def normalize_nav_text(value: str) -> str:
     cleaned = normalize_text(value)
     return PILCROW_TAIL_RE.sub("", cleaned).strip()
+
+
+def section_depth(text: str) -> int | None:
+    match = SECTION_NUMBER_PREFIX_RE.match(text)
+    if not match:
+        return None
+    return len(match.group(1).split("."))
 
 
 def chapter_from_filename(filename: str) -> int | None:
@@ -85,6 +94,9 @@ def collect_on_page_items(container: Tag) -> list[OnPageItem]:
             continue
         text = normalize_nav_text(heading.get_text(" ", strip=True))
         if not text:
+            continue
+        depth = section_depth(text)
+        if depth is not None and depth > MAX_ON_PAGE_SECTION_DEPTH:
             continue
         level_match = HEADING_TAG_RE.match(heading.name or "")
         level = int(level_match.group(1)) if level_match else 2
