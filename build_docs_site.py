@@ -23,7 +23,7 @@ MAX_ON_PAGE_SECTION_DEPTH = 3
 class OnPageItem:
     anchor_id: str
     text: str
-    level: int
+    toc_depth: int
 
 
 @dataclass
@@ -99,9 +99,10 @@ def collect_on_page_items(container: Tag) -> list[OnPageItem]:
         if depth is not None and depth > MAX_ON_PAGE_SECTION_DEPTH:
             continue
         level_match = HEADING_TAG_RE.match(heading.name or "")
-        level = int(level_match.group(1)) if level_match else 2
+        heading_level = int(level_match.group(1)) if level_match else 2
+        toc_depth = depth if depth is not None else heading_level
         seen_ids.add(anchor_id)
-        items.append(OnPageItem(anchor_id=anchor_id, text=text, level=level))
+        items.append(OnPageItem(anchor_id=anchor_id, text=text, toc_depth=toc_depth))
     return items
 
 
@@ -254,7 +255,7 @@ def build_on_this_page(items: list[OnPageItem]) -> str:
         return '<p class="docs-toc-empty">No headings on this page</p>'
     links = []
     for item in items:
-        indent_class = f"toc-level-{min(max(item.level, 1), 6)}"
+        indent_class = f"toc-level-{min(max(item.toc_depth, 1), 6)}"
         links.append(
             '<li class="docs-toc-item">'
             f'<a class="docs-toc-link {indent_class}" href="#{html.escape(item.anchor_id)}">'
